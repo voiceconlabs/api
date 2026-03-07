@@ -1,6 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import * as Twilio from 'twilio';
+
+import { Injectable, Logger } from '@nestjs/common';
+
+import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 
 export interface ITranscriptSegment {
@@ -306,7 +308,7 @@ JSON RESPONSE:`;
     this.logger.log(`Making voice call to ${request.phoneNumber}`);
 
     try {
-      const baseUrl = this.configService.get<string>('BETTER_AUTH_URL') || 'http://localhost:3700';
+      const baseUrl = this.configService.get<string>('BETTER_AUTH_URL') || 'http://localhost:3800/';
       const webhookUrl = `${baseUrl}/api/calls/webhook/voice/${request.callId}`;
 
       const call = await this.twilioClient.calls.create({

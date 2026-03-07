@@ -1,7 +1,6 @@
-import { Injectable, Logger, forwardRef, Inject } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RoomServiceClient, AccessToken, Room } from 'livekit-server-sdk';
-import { AiAgentService } from './ai-agent.service';
 
 export interface ILiveKitRoomOptions {
   name: string;
@@ -40,8 +39,6 @@ export class LiveKitService {
 
   constructor(
     private configService: ConfigService,
-    @Inject(forwardRef(() => AiAgentService))
-    private aiAgentService: AiAgentService,
   ) {
     this.livekitUrl = this.configService.get<string>('LIVEKIT_URL')!;
     this.apiKey = this.configService.get<string>('LIVEKIT_API_KEY')!;
@@ -176,23 +173,6 @@ export class LiveKitService {
       roomName,
       participantIdentity: userId,
       participantName: `User ${userId}`,
-    });
-
-    const agentToken = await this.generateToken({
-      roomName,
-      participantIdentity: `ai-agent-${callId}`,
-      participantName: 'AI Assistant',
-    });
-
-    setImmediate(() => {
-      this.aiAgentService.spawnAgent({
-        roomUrl: this.livekitUrl,
-        token: agentToken,
-        roomName,
-        systemPrompt: 'You are a helpful customer service agent for VoiceConf. Be friendly, brief, and professional.',
-      }).catch((error) => {
-        this.logger.error(`Failed to spawn AI agent: ${error.message}`);
-      });
     });
 
     return {

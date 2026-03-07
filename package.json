@@ -9,6 +9,10 @@
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
+    "dev:api": "nest start --watch",
+    "dev:agent": "tsx agent/worker.ts dev",
+    "dev": "concurrently -n \"API,Agent\" -c \"blue,green\" \"yarn dev:api\" \"yarn dev:agent\"",
+    "download-models": "tsx agent/worker.ts download-files",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
@@ -24,6 +28,10 @@
     "@aws-sdk/client-s3": "^3.997.0",
     "@aws-sdk/s3-request-presigner": "^3.997.0",
     "@deepgram/sdk": "^4.11.3",
+    "@livekit/agents": "^1.0.48",
+    "@livekit/agents-plugin-livekit": "^1.0.48",
+    "@livekit/agents-plugin-silero": "^1.0.48",
+    "@livekit/noise-cancellation-node": "^0.1.9",
     "@livekit/rtc-node": "^0.13.24",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.3",
@@ -53,7 +61,8 @@
     "resend": "^6.9.2",
     "rxjs": "^7.8.1",
     "twilio": "^5.12.2",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -73,6 +82,7 @@
     "@types/passport-local": "^1.0.38",
     "@types/supertest": "^6.0.2",
     "@types/uuid": "^11.0.0",
+    "concurrently": "^9.2.1",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.2",
@@ -85,6 +95,7 @@
     "ts-loader": "^9.5.2",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.20.0"
   },

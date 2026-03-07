@@ -309,7 +309,7 @@ yarn start:dev
 
 # Test connection (requires auth token)
 curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  http://localhost:3700/livekit/test
+  http://localhost:3800/livekit/test
 ```
 
 ### 3. Test Web Call Creation
@@ -319,7 +319,7 @@ curl -X POST \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"callId": "test-123"}' \
-  http://localhost:3700/livekit/webcall/create
+  http://localhost:3800/livekit/webcall/create
 ```
 
 ---

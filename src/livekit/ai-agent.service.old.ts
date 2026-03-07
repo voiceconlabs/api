@@ -6,16 +6,13 @@ import {
   RemoteParticipant,
   RemoteTrack,
   RemoteAudioTrack,
-  TrackKind,
-  LocalAudioTrack,
-  AudioSource,
   AudioFrame,
-  TrackSource,
-  TrackPublishOptions,
-  AudioStream,
+  TrackKind,
+  DataPacketKind,
 } from '@livekit/rtc-node';
 import OpenAI from 'openai';
 import { createClient } from '@deepgram/sdk';
+import { Readable } from 'stream';
 
 interface IAgentConfig {
   roomUrl: string;
@@ -29,7 +26,7 @@ export class AiAgentService {
   private readonly logger = new Logger(AiAgentService.name);
   private openai: OpenAI;
   private deepgram: any;
-  private activeAgents = new Map<string, { room: Room; audioSource: AudioSource }>();
+  private activeAgents = new Map<string, Room>();
 
   constructor(private configService: ConfigService) {
     this.openai = new OpenAI({
@@ -47,13 +44,11 @@ export class AiAgentService {
 
     try {
       const room = new Room();
-      const audioSource = new AudioSource(48000, 1);
-      const audioTrack = LocalAudioTrack.createAudioTrack('agent-audio', audioSource);
 
       room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
         this.logger.log(`👤 Participant connected: ${participant.identity}`);
         this.logger.log(`📊 Room state - Participants: ${room.numParticipants}`);
-        this.greetUser(room, audioSource);
+        this.greetUser(room);
       });
 
       room.on(RoomEvent.TrackSubscribed, (
@@ -63,7 +58,7 @@ export class AiAgentService {
       ) => {
         if (track.kind === TrackKind.KIND_AUDIO) {
           this.logger.log(`Audio track subscribed from: ${participant.identity}`);
-          this.handleAudioTrack(track as RemoteAudioTrack, room, audioSource, config);
+          this.handleAudioTrack(track as RemoteAudioTrack, room, config);
         }
       });
 
@@ -73,21 +68,15 @@ export class AiAgentService {
       });
 
       await room.connect(config.roomUrl, config.token);
-      this.activeAgents.set(config.roomName, { room, audioSource });
+      this.activeAgents.set(config.roomName, room);
 
       this.logger.log(`AI agent connected to room: ${config.roomName}`);
-
-      const publishOptions = new TrackPublishOptions();
-      publishOptions.source = TrackSource.SOURCE_MICROPHONE;
-
-      const publication = await room.localParticipant!.publishTrack(audioTrack, publishOptions);
-      this.logger.log(`✅ Audio track published: ${publication.sid}`);
 
       setTimeout(() => {
         this.logger.log(`🔍 Checking for existing participants in room...`);
         if (room.numParticipants > 1) {
           this.logger.log(`✅ Found ${room.numParticipants - 1} participant(s) already in room`);
-          this.greetUser(room, audioSource);
+          this.greetUser(room);
         } else {
           this.logger.log(`⏳ No participants yet, waiting for someone to join...`);
         }
@@ -98,21 +87,18 @@ export class AiAgentService {
     }
   }
 
-  private async greetUser(room: Room, audioSource: AudioSource): Promise<void> {
+  private async greetUser(room: Room): Promise<void> {
     this.logger.log('🎤 Greeting user...');
     const greeting = "Hello! Thanks for calling. How can I help you today?";
-    await this.speak(room, audioSource, greeting);
+    await this.speak(room, greeting);
     this.logger.log('✅ Greeting completed');
   }
 
   private async handleAudioTrack(
     track: RemoteAudioTrack,
     room: Room,
-    audioSource: AudioSource,
     config: IAgentConfig,
   ): Promise<void> {
-    this.logger.log('🎧 Starting audio track handler...');
-
     const audioBuffer: Buffer[] = [];
     let isProcessing = false;
     let silenceTimer: NodeJS.Timeout | null = null;
@@ -133,7 +119,7 @@ export class AiAgentService {
           const response = await this.generateResponse(transcript, config.systemPrompt);
           this.logger.log(`Agent responding: ${response}`);
 
-          await this.speak(room, audioSource, response);
+          await this.speak(room, response);
         }
       } catch (error) {
         this.logger.error(`Error processing audio: ${error.message}`);
@@ -149,34 +135,7 @@ export class AiAgentService {
       }, 1500);
     };
 
-    try {
-      const audioStream = new AudioStream(track, 48000, 1);
-      this.logger.log('✅ Audio stream created, listening for frames...');
-
-      const reader = audioStream.getReader();
-
-      while (true) {
-        const { done, value } = await reader.read();
-
-        if (done) {
-          this.logger.log('🔚 Audio stream ended');
-          break;
-        }
-
-        if (value) {
-          this.logger.debug(`🎤 Audio frame received: ${value.samplesPerChannel} samples`);
-
-          const int16Data = value.data;
-          const buffer = Buffer.from(int16Data.buffer, int16Data.byteOffset, int16Data.byteLength);
-          audioBuffer.push(buffer);
-
-          resetSilenceTimer();
-        }
-      }
-    } catch (error) {
-      this.logger.error(`❌ Audio stream error: ${error.message}`);
-      this.logger.error(error.stack);
-    }
+    resetSilenceTimer();
   }
 
   private async transcribeAudio(audioBuffer: Buffer): Promise<string> {
@@ -232,9 +191,10 @@ export class AiAgentService {
     }
   }
 
-  private async speak(room: Room, audioSource: AudioSource, text: string): Promise<void> {
+  private async speak(room: Room, text: string): Promise<void> {
     try {
       this.logger.log(`🔊 Speaking: "${text}"`);
+
       this.logger.log('📞 Calling Deepgram TTS API...');
 
       const response = await this.deepgram.speak.request(
@@ -242,8 +202,7 @@ export class AiAgentService {
         {
           model: 'aura-asteria-en',
           encoding: 'linear16',
-          container: 'none',
-          sample_rate: 48000,
+          container: 'wav',
         }
       );
 
@@ -265,23 +224,16 @@ export class AiAgentService {
       this.logger.log(`✅ TTS audio generated successfully`);
       this.logger.log(`📦 Audio buffer size: ${audioBuffer.length} bytes`);
 
-      const sampleRate = 48000;
-      const numChannels = 1;
-      const numSamples = audioBuffer.length / 2;
-
-      const int16Array = new Int16Array(audioBuffer.buffer, audioBuffer.byteOffset, numSamples);
-
-      const audioFrame = new AudioFrame(
-        int16Array,
-        sampleRate,
-        numChannels,
-        numSamples,
-      );
-
-      await audioSource.captureFrame(audioFrame);
-      this.logger.log('✅ Audio frame captured and published to track');
-
-      await new Promise(resolve => setTimeout(resolve, (numSamples / sampleRate) * 1000));
+      if (room.localParticipant) {
+        this.logger.log('📤 Publishing audio data to room...');
+        await room.localParticipant.publishData(
+          new TextEncoder().encode(JSON.stringify({ type: 'agent_speaking', text })),
+          { reliable: true },
+        );
+        this.logger.log('✅ Audio data published to room');
+      } else {
+        this.logger.error('❌ No local participant to publish audio');
+      }
 
       this.logger.log('🎵 Speech completed');
     } catch (error) {
@@ -291,9 +243,9 @@ export class AiAgentService {
   }
 
   async disconnectAgent(roomName: string): Promise<void> {
-    const agent = this.activeAgents.get(roomName);
-    if (agent) {
-      await agent.room.disconnect();
+    const room = this.activeAgents.get(roomName);
+    if (room) {
+      await room.disconnect();
       this.activeAgents.delete(roomName);
       this.logger.log(`Agent disconnected from room: ${roomName}`);
     }

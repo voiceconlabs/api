@@ -1,6 +1,6 @@
 (function() {
   const WIDGET_VERSION = '1.0.0';
-  const API_BASE_URL = 'http://localhost:3700';
+  const API_BASE_URL = 'http://localhost:3800/';
 
   class VoiceConfWidget {
     constructor(config) {

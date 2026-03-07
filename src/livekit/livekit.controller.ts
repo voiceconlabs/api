@@ -115,4 +115,22 @@ export class LiveKitController {
       };
     }
   }
+
+  @Public()
+  @Post('connection-details')
+  async getConnectionDetails(@Body() dto: { roomName: string }) {
+    const roomName = dto.roomName || `room-${Date.now()}`;
+    const userId = `user-${Date.now()}`;
+
+    const session = await this.livekitService.createWebCallSession(
+      roomName,
+      userId
+    );
+
+    return {
+      serverUrl: session.url,
+      participantToken: session.token,
+      participantName: 'Guest User',
+    };
+  }
 }

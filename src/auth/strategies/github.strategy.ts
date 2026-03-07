@@ -1,9 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { AuthProvider } from '../schemas';
+import { AuthService } from '../auth.service';
 import { ConfigService } from '@nestjs/config';
+import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { Strategy } from 'passport-github2';
-import { AuthService } from '../auth.service';
-import { AuthProvider } from '../schemas';
 
 @Injectable()
 export class GithubStrategy extends PassportStrategy(Strategy, 'github') {
@@ -14,7 +14,7 @@ export class GithubStrategy extends PassportStrategy(Strategy, 'github') {
     super({
       clientID: configService.get<string>('GITHUB_CLIENT_ID')!,
       clientSecret: configService.get<string>('GITHUB_CLIENT_SECRET')!,
-      callbackURL: `${configService.get<string>('BETTER_AUTH_URL') || 'http://localhost:3700'}/api/auth/callback/github`,
+      callbackURL: `${configService.get<string>('BETTER_AUTH_URL') || 'http://localhost:3800/'}/api/auth/callback/github`,
       scope: ['user:email'],
     });
   }
