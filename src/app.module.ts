@@ -3,10 +3,10 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AuthModule } from './auth';
-import { MeetingsModule } from './meetings';
 import { StorageModule } from './storage';
 import { AiModule } from './ai';
 import { QueueModule } from './queue';
+import { CallsModule } from './calls';
 
 @Module({
   imports: [
@@ -23,7 +23,7 @@ import { QueueModule } from './queue';
       inject: [ConfigService],
     }),
     AuthModule,
-    MeetingsModule,
+    CallsModule,
     StorageModule,
     AiModule,
     QueueModule,

@@ -2,51 +2,37 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Worker, Job } from 'bullmq';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { QueueService, IMeetingProcessJob } from './queue.service';
-import { StorageService } from '../storage/storage.service';
+import { QueueService, ICallJob } from './queue.service';
 import { AiService } from '../ai/ai.service';
-import {
-  Meeting,
-  MeetingDocument,
-  MeetingStatus,
-  Transcript,
-  TranscriptDocument,
-  Summary,
-  SummaryDocument,
-  ActionItem,
-  ActionItemDocument,
-} from '../meetings/schemas';
+import { Call, CallDocument, CallStatus, CallTemplate, CallTemplateDocument } from '../calls/schemas';
 
 @Injectable()
 export class QueueProcessor implements OnModuleInit {
   private readonly logger = new Logger(QueueProcessor.name);
-  private worker: Worker<IMeetingProcessJob>;
+  private worker: Worker<ICallJob>;
 
   constructor(
     private queueService: QueueService,
-    private storageService: StorageService,
     private aiService: AiService,
-    @InjectModel(Meeting.name) private meetingModel: Model<MeetingDocument>,
-    @InjectModel(Transcript.name) private transcriptModel: Model<TranscriptDocument>,
-    @InjectModel(Summary.name) private summaryModel: Model<SummaryDocument>,
-    @InjectModel(ActionItem.name) private actionItemModel: Model<ActionItemDocument>,
+    @InjectModel(Call.name) private callModel: Model<CallDocument>,
+    @InjectModel(CallTemplate.name) private templateModel: Model<CallTemplateDocument>,
   ) {}
 
   async onModuleInit() {
-    this.worker = new Worker<IMeetingProcessJob>(
-      'meeting-processing',
-      async (job: Job<IMeetingProcessJob>) => {
-        return this.processMeeting(job);
+    this.worker = new Worker<ICallJob>(
+      'voice-calls',
+      async (job: Job<ICallJob>) => {
+        return this.processCall(job);
       },
       {
         connection: this.queueService.getConnection(),
         prefix: this.queueService.getPrefix(),
-        concurrency: 2,
+        concurrency: 5,
       },
     );
 
     this.worker.on('completed', (job) => {
-      this.logger.log(`Job ${job.id} completed for meeting ${job.data.meetingId}`);
+      this.logger.log(`Job ${job.id} completed for call ${job.data.callId}`);
     });
 
     this.worker.on('failed', (job, error) => {
@@ -56,86 +42,77 @@ export class QueueProcessor implements OnModuleInit {
     this.logger.log('Queue processor initialized');
   }
 
-  private async processMeeting(job: Job<IMeetingProcessJob>) {
-    const { meetingId, audioUrl } = job.data;
-    this.logger.log(`Processing meeting: ${meetingId}`);
+  private async processCall(job: Job<ICallJob>) {
+    const { callId, phoneNumber, templateId, variables } = job.data;
+    this.logger.log(`Processing call: ${callId} to ${phoneNumber}`);
 
     try {
-      await this.updateMeetingStatus(meetingId, MeetingStatus.PROCESSING);
+      await this.updateCallStatus(callId, CallStatus.RINGING);
 
-      await job.updateProgress(10);
+      await job.updateProgress(20);
 
-      const audioKey = this.extractKeyFromUrl(audioUrl);
-      const audioBuffer = await this.storageService.getFileBuffer(audioKey);
+      let systemPrompt = 'You are a helpful AI assistant making a phone call.';
 
-      await job.updateProgress(30);
+      if (templateId) {
+        const template = await this.templateModel.findById(templateId);
+        if (template) {
+          systemPrompt = template.systemPrompt;
 
-      const transcriptResult = await this.aiService.transcribeAudio(audioBuffer);
+          if (variables && template.requiredVariables) {
+            for (const variable of template.requiredVariables) {
+              const value = variables[variable];
+              if (value) {
+                systemPrompt = systemPrompt.replace(`{{${variable}}}`, value);
+              }
+            }
+          }
+        }
+      }
 
-      await job.updateProgress(50);
+      await job.updateProgress(40);
 
-      await this.transcriptModel.create({
-        meetingId: new Types.ObjectId(meetingId),
-        language: transcriptResult.language,
-        segments: transcriptResult.segments,
-        fullText: transcriptResult.fullText,
+      const callResult = await this.aiService.makeVoiceCall({
+        phoneNumber,
+        systemPrompt,
+        callId,
       });
 
       await job.updateProgress(60);
 
-      const summaryResult = await this.aiService.generateSummary(transcriptResult.fullText);
-
-      await job.updateProgress(80);
-
-      await this.summaryModel.create({
-        meetingId: new Types.ObjectId(meetingId),
-        template: 'default',
-        overview: summaryResult.overview,
-        keyTakeaways: summaryResult.keyTakeaways,
-        decisions: summaryResult.decisions,
-        nextSteps: summaryResult.nextSteps,
-        topics: summaryResult.topics,
-        sentiment: summaryResult.sentiment,
-        talkTimeStats: [],
-      });
-
-      if (summaryResult.actionItems && summaryResult.actionItems.length > 0) {
-        const actionItems = summaryResult.actionItems.map((item) => ({
-          meetingId: new Types.ObjectId(meetingId),
-          title: item.title,
-          assignee: item.assignee,
-          priority: item.priority,
-          status: 'pending',
-        }));
-
-        await this.actionItemModel.insertMany(actionItems);
+      if (callResult.success) {
+        await this.callModel.updateOne(
+          { _id: new Types.ObjectId(callId) },
+          {
+            status: CallStatus.IN_PROGRESS,
+            externalCallId: callResult.externalCallId,
+            startedAt: new Date(),
+          },
+        );
+      } else {
+        await this.updateCallStatus(callId, CallStatus.FAILED, callResult.error);
       }
-
-      await job.updateProgress(90);
-
-      await this.updateMeetingStatus(meetingId, MeetingStatus.COMPLETED);
 
       await job.updateProgress(100);
 
-      this.logger.log(`Meeting ${meetingId} processed successfully`);
+      this.logger.log(`Call ${callId} initiated successfully`);
 
-      return { success: true, meetingId };
+      return { success: true, callId, externalCallId: callResult.externalCallId };
     } catch (error) {
-      this.logger.error(`Failed to process meeting ${meetingId}: ${error.message}`);
-      await this.updateMeetingStatus(meetingId, MeetingStatus.FAILED);
+      this.logger.error(`Failed to process call ${callId}: ${error.message}`);
+      await this.updateCallStatus(callId, CallStatus.FAILED, error.message);
       throw error;
     }
   }
 
-  private async updateMeetingStatus(meetingId: string, status: MeetingStatus) {
-    await this.meetingModel.updateOne(
-      { _id: new Types.ObjectId(meetingId) },
-      { status },
-    );
-  }
+  private async updateCallStatus(callId: string, status: CallStatus, errorMessage?: string) {
+    const updateData: any = { status };
+    if (errorMessage) {
+      updateData.errorMessage = errorMessage;
+    }
 
-  private extractKeyFromUrl(url: string): string {
-    const urlObj = new URL(url);
-    return urlObj.pathname.slice(1);
+    await this.callModel.updateOne(
+      { _id: new Types.ObjectId(callId) },
+      updateData,
+    );
   }
 }

@@ -33,6 +33,18 @@ export interface ISummaryResult {
   sentiment: 'positive' | 'neutral' | 'negative';
 }
 
+export interface IVoiceCallRequest {
+  phoneNumber: string;
+  systemPrompt: string;
+  callId: string;
+}
+
+export interface IVoiceCallResult {
+  success: boolean;
+  externalCallId?: string;
+  error?: string;
+}
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
@@ -234,5 +246,16 @@ JSON RESPONSE:`;
     }
 
     return [];
+  }
+
+  async makeVoiceCall(request: IVoiceCallRequest): Promise<IVoiceCallResult> {
+    this.logger.log(`Making voice call to ${request.phoneNumber}`);
+
+    this.logger.warn('Voice AI provider not configured. Please integrate Vapi, Bland, or Deepgram.');
+
+    return {
+      success: false,
+      error: 'Voice AI provider not configured. Set VAPI_API_KEY, BLAND_API_KEY, or DEEPGRAM_API_KEY in .env',
+    };
   }
 }
