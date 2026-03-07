@@ -7,6 +7,7 @@ import { StorageModule } from './storage';
 import { AiModule } from './ai';
 import { QueueModule } from './queue';
 import { CallsModule } from './calls';
+import { LiveKitModule } from './livekit';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { CallsModule } from './calls';
     StorageModule,
     AiModule,
     QueueModule,
+    LiveKitModule,
   ],
   controllers: [],
   providers: [],

@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VoiceConf Widget Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            background: white;
+            border-radius: 20px;
+            padding: 60px 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            font-size: 42px;
+            color: #1a202c;
+            margin-bottom: 16px;
+            font-weight: 700;
+        }
+
+        .subtitle {
+            font-size: 20px;
+            color: #718096;
+            margin-bottom: 40px;
+        }
+
+        .feature-list {
+            list-style: none;
+            margin-bottom: 40px;
+        }
+
+        .feature-list li {
+            padding: 16px 0;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 18px;
+            color: #4a5568;
+            display: flex;
+            align-items: center;
+        }
+
+        .feature-list li:before {
+            content: "✓";
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            background: #667eea;
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 24px;
+            margin-right: 12px;
+            font-weight: bold;
+        }
+
+        .code-section {
+            background: #1a202c;
+            border-radius: 12px;
+            padding: 24px;
+            margin: 30px 0;
+        }
+
+        .code-section h3 {
+            color: #a0aec0;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+        }
+
+        .code-block {
+            background: #2d3748;
+            border-radius: 8px;
+            padding: 16px;
+            overflow-x: auto;
+        }
+
+        .code-block code {
+            color: #68d391;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .note {
+            background: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 16px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+
+        .note strong {
+            color: #78350f;
+        }
+
+        .note p {
+            color: #92400e;
+            margin-top: 8px;
+        }
+
+        .cta {
+            text-align: center;
+            margin-top: 40px;
+            padding-top: 40px;
+            border-top: 2px solid #e2e8f0;
+        }
+
+        .cta-text {
+            font-size: 18px;
+            color: #4a5568;
+            margin-bottom: 16px;
+        }
+
+        .arrow {
+            font-size: 32px;
+            animation: bounce 2s infinite;
+        }
+
+        @keyframes bounce {
+            0%, 100% {
+                transform: translateY(0);
+            }
+            50% {
+                transform: translateY(-10px);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ VoiceConf Widget Demo</h1>
+        <p class="subtitle">Add voice calling to any website with one line of code</p>
+
+        <ul class="feature-list">
+            <li>One-click voice calling</li>
+            <li>No downloads required</li>
+            <li>Works in all modern browsers</li>
+            <li>Crystal clear audio quality</li>
+            <li>Fully customizable</li>
+        </ul>
+
+        <div class="code-section">
+            <h3>Installation</h3>
+            <div class="code-block">
+                <code>&lt;script src="https://voiceconf-api.meetwrap.com/widget/voiceconf-widget.js" data-call-id="your-unique-id"&gt;&lt;/script&gt;</code>
+            </div>
+        </div>
+
+        <div class="note">
+            <strong>👀 Look at the bottom right corner!</strong>
+            <p>The voice call widget is already loaded on this page. Click the button to test it out.</p>
+        </div>
+
+        <div class="code-section">
+            <h3>Options</h3>
+            <div class="code-block">
+                <code>data-call-id="unique-call-id"<br>
+data-user-id="optional-user-id"<br>
+data-position="bottom-right"<br>
+data-theme="default"</code>
+            </div>
+        </div>
+
+        <div class="cta">
+            <p class="cta-text">Try the widget now!</p>
+            <div class="arrow">↘</div>
+        </div>
+    </div>
+
+    <script src="/widget/voiceconf-widget.js" data-call-id="demo-test" data-user-id="demo-user"></script>
+</body>
+</html>

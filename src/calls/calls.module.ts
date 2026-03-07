@@ -6,6 +6,7 @@ import { CallsService } from './calls.service';
 import { Call, CallSchema, CallTemplate, CallTemplateSchema } from './schemas';
 import { QueueModule } from '../queue/queue.module';
 import { AiModule } from '../ai/ai.module';
+import { StorageModule } from '../storage/storage.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { AiModule } from '../ai/ai.module';
     ]),
     forwardRef(() => QueueModule),
     AiModule,
+    StorageModule,
   ],
   controllers: [CallsController, TwilioWebhookController],
   providers: [CallsService],

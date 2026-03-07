@@ -352,7 +352,7 @@ JSON RESPONSE:`;
       messages.push(...request.messages);
 
       const completion = await this.openai.chat.completions.create({
-        model: 'gpt-4-turbo',
+        model: 'gpt-4o-mini',
         messages,
         temperature: 0.7,
         max_tokens: 150,

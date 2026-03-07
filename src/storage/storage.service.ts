@@ -69,6 +69,10 @@ export class StorageService {
     return this.uploadFile(file, `meetings/${meetingId}`, 'audio.wav', 'audio/wav');
   }
 
+  async uploadCallRecording(file: Buffer, callId: string): Promise<IUploadResult> {
+    return this.uploadFile(file, 'call-recordings', `${callId}.mp3`, 'audio/mpeg');
+  }
+
   async getSignedUrl(key: string, expiresIn = 3600): Promise<string> {
     const command = new GetObjectCommand({
       Bucket: this.bucketName,

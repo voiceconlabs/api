@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { AiService } from '../ai/ai.service';
+import { StorageService } from '../storage/storage.service';
 import { Call, CallDocument, CallStatus, CallTemplate, CallTemplateDocument } from './schemas';
 
 interface ITwilioVoiceWebhook {
@@ -48,6 +49,7 @@ export class TwilioWebhookController {
   constructor(
     private readonly aiService: AiService,
     private readonly configService: ConfigService,
+    private readonly storageService: StorageService,
     @InjectModel(Call.name) private callModel: Model<CallDocument>,
     @InjectModel(CallTemplate.name) private templateModel: Model<CallTemplateDocument>,
   ) {}
@@ -278,10 +280,27 @@ export class TwilioWebhookController {
     this.logger.log(`Recording Duration: ${twilioData.RecordingDuration}s`);
 
     try {
+      const twilioRecordingUrl = `${twilioData.RecordingUrl}.mp3`;
+
+      this.logger.log(`Downloading recording from Twilio: ${twilioRecordingUrl}`);
+      const response = await fetch(twilioRecordingUrl);
+
+      if (!response.ok) {
+        throw new Error(`Failed to download recording: ${response.statusText}`);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const recordingBuffer = Buffer.from(arrayBuffer);
+
+      this.logger.log(`Uploading recording to R2 for call ${callId}`);
+      const uploadResult = await this.storageService.uploadCallRecording(recordingBuffer, callId);
+
+      this.logger.log(`Recording uploaded to R2: ${uploadResult.url}`);
+
       await this.callModel.updateOne(
         { _id: new Types.ObjectId(callId) },
         {
-          recordingUrl: twilioData.RecordingUrl,
+          recordingUrl: uploadResult.url,
         },
       );
 
