@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as Twilio from 'twilio';
+import OpenAI from 'openai';
 
 export interface ITranscriptSegment {
   speaker: string;
@@ -45,17 +47,43 @@ export interface IVoiceCallResult {
   error?: string;
 }
 
+export interface IConversationMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface IConversationRequest {
+  messages: IConversationMessage[];
+  systemPrompt?: string;
+}
+
+export interface IConversationResponse {
+  message: string;
+  shouldEndCall: boolean;
+}
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
   private readonly accountId: string;
   private readonly apiToken: string;
   private readonly baseUrl: string;
+  private readonly twilioClient: ReturnType<typeof Twilio>;
+  private readonly openai: OpenAI;
+  private readonly twilioPhoneNumber: string;
 
   constructor(private configService: ConfigService) {
     this.accountId = this.configService.get<string>('CLOUDFLARE_ACCOUNT_ID')!;
     this.apiToken = this.configService.get<string>('CLOUDFLARE_API_TOKEN')!;
     this.baseUrl = `https://api.cloudflare.com/client/v4/accounts/${this.accountId}/ai/run`;
+
+    const twilioSid = this.configService.get<string>('TWILIO_ACCOUNT_SID')!;
+    const twilioToken = this.configService.get<string>('TWILIO_AUTH_TOKEN')!;
+    this.twilioPhoneNumber = this.configService.get<string>('TWILIO_PHONE_NUMBER')!;
+    this.twilioClient = Twilio(twilioSid, twilioToken);
+
+    const openaiKey = this.configService.get<string>('OPENAI_API_KEY')!;
+    this.openai = new OpenAI({ apiKey: openaiKey });
   }
 
   async transcribeAudio(audioBuffer: Buffer): Promise<ITranscriptResult> {
@@ -248,14 +276,117 @@ JSON RESPONSE:`;
     return [];
   }
 
+  async textToSpeech(text: string, voice: string = 'luna'): Promise<Buffer> {
+    this.logger.log(`Generating speech with Cloudflare Aura (voice: ${voice})`);
+
+    const response = await fetch(`${this.baseUrl}/@cf/deepgram/aura-2-en`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        text,
+        speaker: voice,
+        audio_encoding: 'mp3',
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      this.logger.error(`TTS generation failed: ${error}`);
+      throw new Error(`TTS generation failed: ${error}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  }
+
   async makeVoiceCall(request: IVoiceCallRequest): Promise<IVoiceCallResult> {
     this.logger.log(`Making voice call to ${request.phoneNumber}`);
 
-    this.logger.warn('Voice AI provider not configured. Please integrate Vapi, Bland, or Deepgram.');
+    try {
+      const baseUrl = this.configService.get<string>('BETTER_AUTH_URL') || 'http://localhost:3700';
+      const webhookUrl = `${baseUrl}/api/calls/webhook/voice/${request.callId}`;
 
-    return {
-      success: false,
-      error: 'Voice AI provider not configured. Set VAPI_API_KEY, BLAND_API_KEY, or DEEPGRAM_API_KEY in .env',
-    };
+      const call = await this.twilioClient.calls.create({
+        to: request.phoneNumber,
+        from: this.twilioPhoneNumber,
+        url: webhookUrl,
+        statusCallback: `${baseUrl}/api/calls/webhook/status/${request.callId}`,
+        statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+        statusCallbackMethod: 'POST',
+        record: true,
+        recordingStatusCallback: `${baseUrl}/api/calls/webhook/recording/${request.callId}`,
+        recordingStatusCallbackMethod: 'POST',
+      });
+
+      this.logger.log(`Call initiated successfully. Twilio Call SID: ${call.sid}`);
+
+      return {
+        success: true,
+        externalCallId: call.sid,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to initiate call: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  async generateConversationResponse(request: IConversationRequest): Promise<IConversationResponse> {
+    this.logger.log('Generating conversation response with OpenAI GPT-4');
+
+    try {
+      const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
+
+      if (request.systemPrompt) {
+        messages.push({
+          role: 'system',
+          content: request.systemPrompt,
+        });
+      }
+
+      messages.push(...request.messages);
+
+      const completion = await this.openai.chat.completions.create({
+        model: 'gpt-4-turbo',
+        messages,
+        temperature: 0.7,
+        max_tokens: 150,
+      });
+
+      const responseMessage = completion.choices[0].message.content || '';
+
+      const shouldEndCall = this.detectEndOfConversation(responseMessage);
+
+      return {
+        message: responseMessage,
+        shouldEndCall,
+      };
+    } catch (error) {
+      this.logger.error(`OpenAI conversation failed: ${error.message}`);
+      return {
+        message: 'I apologize, but I encountered an error. Please try again later.',
+        shouldEndCall: true,
+      };
+    }
+  }
+
+  private detectEndOfConversation(message: string): boolean {
+    const endPhrases = [
+      'goodbye',
+      'have a great day',
+      'have a nice day',
+      'talk to you later',
+      'thank you for your time',
+      'that\'s all',
+      'all set',
+    ];
+
+    const lowerMessage = message.toLowerCase();
+    return endPhrases.some((phrase) => lowerMessage.includes(phrase));
   }
 }
