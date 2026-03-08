@@ -16,6 +16,12 @@ import {
 } from '@livekit/rtc-node';
 import OpenAI from 'openai';
 import { createClient } from '@deepgram/sdk';
+import * as fs from 'fs';
+import * as path from 'path';
+import { promisify } from 'util';
+
+const writeFile = promisify(fs.writeFile);
+const unlink = promisify(fs.unlink);
 
 interface IAgentConfig {
   roomUrl: string;
@@ -29,6 +35,8 @@ export class AiAgentService {
   private readonly logger = new Logger(AiAgentService.name);
   private openai: OpenAI;
   private deepgram: any;
+  private cloudflareAccountId: string;
+  private cloudflareApiToken: string;
   private activeAgents = new Map<string, { room: Room; audioSource: AudioSource }>();
 
   constructor(private configService: ConfigService) {
@@ -40,6 +48,9 @@ export class AiAgentService {
     if (deepgramApiKey) {
       this.deepgram = createClient(deepgramApiKey);
     }
+
+    this.cloudflareAccountId = this.configService.get('CLOUDFLARE_ACCOUNT_ID') || '';
+    this.cloudflareApiToken = this.configService.get('CLOUDFLARE_API_TOKEN') || '';
   }
 
   async spawnAgent(config: IAgentConfig): Promise<void> {
@@ -49,11 +60,15 @@ export class AiAgentService {
       const room = new Room();
       const audioSource = new AudioSource(48000, 1);
       const audioTrack = LocalAudioTrack.createAudioTrack('agent-audio', audioSource);
+      let hasGreeted = false;
 
       room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
         this.logger.log(`👤 Participant connected: ${participant.identity}`);
         this.logger.log(`📊 Room state - Participants: ${room.numParticipants}`);
-        this.greetUser(room, audioSource);
+        if (!hasGreeted) {
+          hasGreeted = true;
+          this.greetUser(room, audioSource);
+        }
       });
 
       room.on(RoomEvent.TrackSubscribed, (
@@ -63,6 +78,10 @@ export class AiAgentService {
       ) => {
         if (track.kind === TrackKind.KIND_AUDIO) {
           this.logger.log(`Audio track subscribed from: ${participant.identity}`);
+          if (!hasGreeted) {
+            hasGreeted = true;
+            this.greetUser(room, audioSource);
+          }
           this.handleAudioTrack(track as RemoteAudioTrack, room, audioSource, config);
         }
       });
@@ -85,10 +104,13 @@ export class AiAgentService {
 
       setTimeout(() => {
         this.logger.log(`🔍 Checking for existing participants in room...`);
-        if (room.numParticipants > 1) {
-          this.logger.log(`✅ Found ${room.numParticipants - 1} participant(s) already in room`);
+        const remoteParticipantCount = room.remoteParticipants.size;
+        this.logger.log(`📊 Remote participants: ${remoteParticipantCount}`);
+        if (remoteParticipantCount > 0 && !hasGreeted) {
+          this.logger.log(`✅ Found ${remoteParticipantCount} participant(s) already in room`);
+          hasGreeted = true;
           this.greetUser(room, audioSource);
-        } else {
+        } else if (remoteParticipantCount === 0) {
           this.logger.log(`⏳ No participants yet, waiting for someone to join...`);
         }
       }, 2000);
@@ -116,15 +138,21 @@ export class AiAgentService {
     const audioBuffer: Buffer[] = [];
     let isProcessing = false;
     let silenceTimer: NodeJS.Timeout | null = null;
+    let hasAudio = false;
+    const SILENCE_THRESHOLD = 500;
+    const SILENCE_TIMEOUT = 800;
+    const MAX_BUFFER_SIZE = 5 * 48000 * 2;
 
     const processAudio = async () => {
-      if (isProcessing || audioBuffer.length === 0) return;
+      if (isProcessing || audioBuffer.length === 0 || !hasAudio) return;
 
       isProcessing = true;
       const audioData = Buffer.concat(audioBuffer);
       audioBuffer.length = 0;
+      hasAudio = false;
 
       try {
+        this.logger.log(`📊 Processing ${audioData.length} bytes of audio`);
         const transcript = await this.transcribeAudio(audioData);
 
         if (transcript && transcript.trim().length > 0) {
@@ -142,11 +170,21 @@ export class AiAgentService {
       }
     };
 
+    const checkSilence = (audioData: Int16Array): boolean => {
+      let sum = 0;
+      for (let i = 0; i < audioData.length; i++) {
+        sum += Math.abs(audioData[i]);
+      }
+      const average = sum / audioData.length;
+      return average > SILENCE_THRESHOLD;
+    };
+
     const resetSilenceTimer = () => {
       if (silenceTimer) clearTimeout(silenceTimer);
       silenceTimer = setTimeout(() => {
+        this.logger.log('⏱️ Silence detected, processing audio...');
         processAudio();
-      }, 1500);
+      }, SILENCE_TIMEOUT);
     };
 
     try {
@@ -160,17 +198,33 @@ export class AiAgentService {
 
         if (done) {
           this.logger.log('🔚 Audio stream ended');
+          if (audioBuffer.length > 0) {
+            await processAudio();
+          }
           break;
         }
 
         if (value) {
-          this.logger.debug(`🎤 Audio frame received: ${value.samplesPerChannel} samples`);
-
           const int16Data = value.data;
           const buffer = Buffer.from(int16Data.buffer, int16Data.byteOffset, int16Data.byteLength);
-          audioBuffer.push(buffer);
 
-          resetSilenceTimer();
+          const isAudio = checkSilence(int16Data);
+
+          if (isAudio) {
+            hasAudio = true;
+            audioBuffer.push(buffer);
+
+            const totalSize = audioBuffer.reduce((sum, buf) => sum + buf.length, 0);
+            if (totalSize > MAX_BUFFER_SIZE) {
+              this.logger.warn('⚠️ Buffer too large, processing early');
+              if (silenceTimer) clearTimeout(silenceTimer);
+              await processAudio();
+            } else {
+              resetSilenceTimer();
+            }
+          } else if (hasAudio) {
+            audioBuffer.push(buffer);
+          }
         }
       }
     } catch (error) {
@@ -181,20 +235,12 @@ export class AiAgentService {
 
   private async transcribeAudio(audioBuffer: Buffer): Promise<string> {
     try {
-      this.logger.log(`🎧 Transcribing audio (${audioBuffer.length} bytes)...`);
+      this.logger.log(`🎧 Transcribing audio (${audioBuffer.length} bytes) with Deepgram...`);
 
-      const uint8Array = new Uint8Array(audioBuffer);
-      const blob = new Blob([uint8Array], { type: 'audio/wav' });
-      const audioFile = new File([blob], 'audio.wav', { type: 'audio/wav' });
+      const transcript = await this.transcribeWithDeepgram(audioBuffer);
+      this.logger.log(`✅ Deepgram transcription: "${transcript}"`);
+      return transcript;
 
-      const transcription = await this.openai.audio.transcriptions.create({
-        file: audioFile,
-        model: 'whisper-1',
-        language: 'en',
-      });
-
-      this.logger.log(`✅ Transcription: "${transcription.text}"`);
-      return transcription.text;
     } catch (error) {
       this.logger.error(`❌ Transcription error: ${error.message}`);
       this.logger.error(error.stack);
@@ -202,28 +248,94 @@ export class AiAgentService {
     }
   }
 
+  private async transcribeWithCloudflare(audioBuffer: Buffer): Promise<string> {
+    const formData = new FormData();
+    const uint8Array = new Uint8Array(audioBuffer);
+    const blob = new Blob([uint8Array], { type: 'audio/wav' });
+    formData.append('audio', blob, 'audio.wav');
+
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${this.cloudflareAccountId}/ai/run/@cf/openai/whisper`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.cloudflareApiToken}`,
+        },
+        body: formData,
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Cloudflare API error: ${response.statusText} - ${errorText}`);
+    }
+
+    const result = await response.json();
+    return result.result?.text || '';
+  }
+
+  private async transcribeWithDeepgram(audioBuffer: Buffer): Promise<string> {
+    const wavBuffer = this.addWavHeader(audioBuffer, 48000, 1, 16);
+
+    const { result, error } = await this.deepgram.listen.prerecorded.transcribeFile(
+      wavBuffer,
+      {
+        model: 'nova-2',
+        language: 'en',
+        smart_format: true,
+      }
+    );
+
+    if (error) {
+      throw new Error(`Deepgram error: ${JSON.stringify(error)}`);
+    }
+
+    return result.results?.channels[0]?.alternatives[0]?.transcript || '';
+  }
+
+  private addWavHeader(pcmBuffer: Buffer, sampleRate: number, numChannels: number, bitsPerSample: number): Buffer {
+    const dataSize = pcmBuffer.length;
+    const header = Buffer.alloc(44);
+
+    header.write('RIFF', 0);
+    header.writeUInt32LE(36 + dataSize, 4);
+    header.write('WAVE', 8);
+    header.write('fmt ', 12);
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20);
+    header.writeUInt16LE(numChannels, 22);
+    header.writeUInt32LE(sampleRate, 24);
+    header.writeUInt32LE(sampleRate * numChannels * (bitsPerSample / 8), 28);
+    header.writeUInt16LE(numChannels * (bitsPerSample / 8), 32);
+    header.writeUInt16LE(bitsPerSample, 34);
+    header.write('data', 36);
+    header.writeUInt32LE(dataSize, 40);
+
+    return Buffer.concat([header, pcmBuffer]);
+  }
+
   private async generateResponse(userMessage: string, systemPrompt?: string): Promise<string> {
     try {
       this.logger.log(`🤖 Generating response for: "${userMessage}"`);
 
       const completion = await this.openai.chat.completions.create({
-        model: 'gpt-4',
+        model: 'gpt-4o-mini',
         messages: [
           {
             role: 'system',
-            content: systemPrompt || 'You are a helpful customer service agent. Be brief and friendly.',
+            content: systemPrompt || 'You are a helpful customer service agent. Be brief and friendly. Keep responses under 2 sentences.',
           },
           {
             role: 'user',
             content: userMessage,
           },
         ],
-        max_tokens: 150,
+        max_tokens: 100,
         temperature: 0.7,
       });
 
       const response = completion.choices[0].message.content || 'I apologize, I did not understand that.';
-      this.logger.log(`✅ GPT-4 response: "${response}"`);
+      this.logger.log(`✅ GPT-4o-mini response: "${response}"`);
       return response;
     } catch (error) {
       this.logger.error(`❌ LLM error: ${error.message}`);
