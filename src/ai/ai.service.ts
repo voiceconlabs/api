@@ -308,7 +308,7 @@ JSON RESPONSE:`;
     this.logger.log(`Making voice call to ${request.phoneNumber}`);
 
     try {
-      const baseUrl = this.configService.get<string>('BETTER_AUTH_URL') || 'http://localhost:3800/';
+      const baseUrl = this.configService.get<string>('AUTH_CALLBACK_URL') || 'http://localhost:3800/';
       const webhookUrl = `${baseUrl}/api/calls/webhook/voice/${request.callId}`;
 
       const call = await this.twilioClient.calls.create({

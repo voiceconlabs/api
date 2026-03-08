@@ -4,6 +4,7 @@ import { JwtAuthGuard } from '../auth/guards';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { LiveKitService } from './livekit.service';
+import { AiAgentService } from './ai-agent.service';
 
 class CreateWebCallDto {
   @IsString()
@@ -27,7 +28,10 @@ class CreateWidgetCallDto {
 @Controller('livekit')
 @UseGuards(JwtAuthGuard)
 export class LiveKitController {
-  constructor(private readonly livekitService: LiveKitService) {}
+  constructor(
+    private readonly livekitService: LiveKitService,
+    private readonly aiAgentService: AiAgentService,
+  ) {}
 
   @Get('rooms')
   async listRooms() {
@@ -88,6 +92,19 @@ export class LiveKitController {
       callId,
       userId
     );
+
+    const agentToken = await this.livekitService.generateToken({
+      roomName: session.roomName,
+      participantIdentity: `ai-agent-${Date.now()}`,
+      participantName: 'AI Assistant',
+    });
+
+    this.aiAgentService.spawnAgent({
+      roomUrl: session.url,
+      token: agentToken,
+      roomName: session.roomName,
+      systemPrompt: 'You are a helpful customer service agent. Be brief, friendly, and conversational.',
+    });
 
     return {
       success: true,
